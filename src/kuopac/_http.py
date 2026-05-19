@@ -48,18 +48,28 @@ class HttpSession:
         referer: str = DEFAULT_REFERER,
         timeout: float = 30.0,
         verify: Any = None,
+        transport: httpx.BaseTransport | None = None,
     ):
-        self._client = httpx.Client(
-            base_url=BASE_URL,
-            verify=verify if verify is not None else make_ssl_context(),
-            follow_redirects=True,
-            timeout=timeout,
-            headers={
+        # ``transport`` is the test-injection point — pass an
+        # ``httpx.MockTransport`` to replay canned responses without touching
+        # the real network or the legacy-cipher SSL handshake.
+        client_kwargs: dict[str, Any] = {
+            "base_url": BASE_URL,
+            "follow_redirects": True,
+            "timeout": timeout,
+            "headers": {
                 "User-Agent": user_agent,
                 "Referer": referer,        # silences 403 on opac_details/
                 "Accept-Language": "ja",
             },
-        )
+        }
+        if transport is not None:
+            client_kwargs["transport"] = transport
+        else:
+            client_kwargs["verify"] = (
+                verify if verify is not None else make_ssl_context()
+            )
+        self._client = httpx.Client(**client_kwargs)
         self._csrf: str | None = None
 
     # ---- request helpers -------------------------------------------------

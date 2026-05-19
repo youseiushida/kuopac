@@ -10,6 +10,8 @@ Design principles:
 from __future__ import annotations
 
 import json
+import re
+import warnings
 from typing import Iterable, Self
 
 from . import _parse
@@ -50,9 +52,20 @@ class KulineClient:
                 print(book.title)
     """
 
-    def __init__(self, *, user_agent: str | None = None, timeout: float = 30.0):
+    def __init__(
+        self,
+        *,
+        user_agent: str | None = None,
+        timeout: float = 30.0,
+        _http: "HttpSession | None" = None,
+    ):
         from ._http import DEFAULT_UA
-        self._http = HttpSession(user_agent=user_agent or DEFAULT_UA, timeout=timeout)
+        # ``_http`` is an injection point for tests (httpx.MockTransport) and
+        # advanced consumers who want a custom session — leading underscore
+        # marks it as internal.
+        self._http = _http or HttpSession(
+            user_agent=user_agent or DEFAULT_UA, timeout=timeout,
+        )
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -154,10 +167,28 @@ class KulineClient:
                 param_name = cinii_field_map.get(cond.field)
                 if param_name:
                     params[param_name] = cond.keyword
+                else:
+                    warnings.warn(
+                        f"CiNii (cmode=5) does not support search field "
+                        f"{cond.field.name!r}; condition {cond.keyword!r} dropped. "
+                        f"Supported fields: "
+                        f"{sorted(f.name for f in cinii_field_map)}.",
+                        UserWarning,
+                        stacklevel=3,
+                    )
             if q.media_types:
-                params["ciniibooks_file_exp"] = [
-                    str(int(m)) for m in q.media_types if int(m) in (1, 5)
-                ]
+                accepted = [m for m in q.media_types if int(m) in (1, 5)]
+                dropped = [m for m in q.media_types if int(m) not in (1, 5)]
+                if dropped:
+                    warnings.warn(
+                        f"CiNii (cmode=5) only accepts MediaType.BOOK and "
+                        f"MediaType.SERIAL filters; dropped: "
+                        f"{[m.name for m in dropped]}.",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+                if accepted:
+                    params["ciniibooks_file_exp"] = [str(int(m)) for m in accepted]
             if q.year_from is not None:
                 params["year1_ciniibooks"] = str(q.year_from)
             if q.year_to is not None:
@@ -236,30 +267,51 @@ class KulineClient:
     # DETAIL
     # =====================================================================
 
-    def detail(self, book_or_bibid: str | Book) -> BookDetail:
+    def detail(
+        self,
+        book_or_bibid: str | Book,
+        *,
+        scope: Scope | None = None,
+    ) -> BookDetail:
         """Fetch the full bibliographic detail for a book.
 
         Accepts either a bibid string or a :class:`Book` from a search result.
-        For CiNii records pass the ncid (or a CiNii Book).
+        For CiNii records pass the ncid (or a CiNii :class:`Book`).
+
+        ``scope`` overrides the scope inferred from a :class:`Book` — useful
+        when you only have a bare identifier string and need to force the
+        CiNii endpoint (e.g. ``kuline.detail("BD18537825", scope=Scope.CINII)``).
         """
         if isinstance(book_or_bibid, Book):
-            if book_or_bibid.scope is Scope.CINII:
-                return self._cinii_detail(book_or_bibid.ncid or book_or_bibid.ids.primary_key())
+            effective_scope = scope if scope is not None else book_or_bibid.scope
+            if effective_scope is Scope.CINII:
+                return self._cinii_detail(
+                    book_or_bibid.ncid or book_or_bibid.ids.primary_key()
+                )
             bibid = book_or_bibid.bibid or book_or_bibid.ids.primary_key()
         else:
+            if scope is Scope.CINII:
+                return self._cinii_detail(book_or_bibid)
             bibid = book_or_bibid
 
         r = self._http.get("/opac/opac_details/", params={
             "lang": "0", "amode": "11", "bibid": bibid,
         })
-        if r.status_code == 404 or "404" in r.text[:200]:
-            raise NotFoundError(f"bibid {bibid!r} not found")
+        # KULINE responds with HTTP 200 for invalid bibids — the not-found
+        # signal is the absence of the detail table.  Distinguishing this
+        # from a genuine template-change ParseError lets callers handle the
+        # former cleanly without losing diagnostic value for the latter.
+        # See docs/opac-spec.md §4.6.
+        if "book-title-trd" not in r.text:
+            raise NotFoundError(f"bibid {bibid!r} not found in KULINE")
         return _parse.parse_detail(r.text, bibid=bibid)
 
     def _cinii_detail(self, ncid: str) -> BookDetail:
         r = self._http.get("/opac/opac_detail_ciniibooks/", params={
             "lang": "0", "amode": "11", "ncid": ncid,
         })
+        if "book-title-trd" not in r.text:
+            raise NotFoundError(f"ncid {ncid!r} not found in CiNii")
         return _parse.parse_detail(r.text, ncid=ncid)
 
     # =====================================================================
@@ -319,7 +371,7 @@ class KulineClient:
             "odrno": q.odrno, "bbcd": q.bbcd, "contcd": q.contcd,
             "addmsg": q.addmsg,
         }, headers={"X-Requested-With": "XMLHttpRequest"})
-        text = " ".join(__import__("re").sub(r"<[^>]+>", " ", r.text).split())
+        text = " ".join(re.sub(r"<[^>]+>", " ", r.text).split())
         if isinstance(holding_or_query, Holding):
             holding_or_query.condition = text or None
         return text or None

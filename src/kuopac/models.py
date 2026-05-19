@@ -327,6 +327,20 @@ class SearchResult:
             return None
         return self._client._page(self, self.page_start + self.page_size)
 
+    def start_at(self, page_start: int) -> "SearchResult":
+        """Fetch a specific 1-based start offset, reusing the existing ``opkey``.
+
+        Equivalent to KULINE's "go to page" navigation (``amode=22``).  Use
+        this when you know the absolute position you want — e.g. resuming a
+        paginated walk from a saved offset.  ``page_start`` is 1-indexed and
+        should typically be ``1 + k * page_size`` for some integer ``k``.
+        """
+        if self._client is None:
+            raise RuntimeError("SearchResult is detached from its client")
+        if page_start < 1:
+            raise ValueError("page_start must be >= 1")
+        return self._client._page(self, page_start)
+
     def iter_all(self, *, max_pages: int | None = None) -> Iterator[Book]:
         """Yield every book across pages until exhausted or `max_pages` reached."""
         page: SearchResult | None = self

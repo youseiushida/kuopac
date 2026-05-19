@@ -579,6 +579,22 @@ GET /opac/opac_blstat/?lang=0&phasecd=50&hldstat=1&lkcd=1
 
 レスポンス: 通常は HTML 断片 (在架/貸出中/取置等)。観測サンプルは0バイト (= 「特に表示すべき状態なし」=在架可能と推定 [inferred])。
 
+### 4.6 not-found レスポンス [verified]
+
+**KULINE は不正な bibid に対しても HTTP 200 を返す**。404 ステータスコードや
+明示的なエラーメッセージは返さない。識別シグナルは:
+
+| 観測項目 | 有効な bibid | 無効な bibid |
+|---------|------------|------------|
+| HTTP ステータス | 200 | **200** (同じ) |
+| `<span class="book-title-trd">` | 存在 | **欠落** |
+| `<table class="book-detail-table">` | 存在 | 欠落 |
+| `<title>` タグ | 書名込みのページタイトル | `京都大学 KULINE` (検索画面の汎用タイトル) |
+| ボディ長 | 30K〜 | ~17K (検索画面シェル) |
+
+→ ライブラリ実装の判定: `if "book-title-trd" not in r.text: raise NotFoundError`。
+`opac_detail_ciniibooks/` も無効な ncid に対して同形式 (200, book-title-trd 欠落)。
+
 ---
 
 ## 5. 他大学詳細 `/opac/opac_detail_ciniibooks/` [verified]

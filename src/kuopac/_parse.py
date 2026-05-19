@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlparse
 
 from lxml import html as lxml_html
 
+from ._http import BASE_URL
 from .enums import DataType, FacetType, Scope, SupplementarySource
 from .errors import ParseError
 from .models import (
@@ -155,7 +156,9 @@ def parse_search_results(body: str, *, request_url: str, scope: Scope,
 # Detail page
 # ---------------------------------------------------------------------------
 
-_RE_PERMALINK = re.compile(r"https://kuline\.kulib\.kyoto-u\.ac\.jp/opac/opac_link/bibid/[^\"']+")
+_RE_PERMALINK = re.compile(
+    re.escape(BASE_URL) + r"/opac/opac_link/bibid/[^\"']+",
+)
 
 
 def parse_detail(body: str, *, bibid: str | None = None,

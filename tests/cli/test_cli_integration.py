@@ -1,0 +1,202 @@
+"""CLI integration smoke tests — typer dispatch + envelope writing.
+
+Mocks :class:`KulineClient` methods so no real HTTP traffic is made.  The goal
+is to verify command-level glue (option parsing, envelope shape, exit codes),
+not the parser layer which is exercised by the library's own audit suite.
+"""
+from __future__ import annotations
+
+import json
+
+import pytest
+from typer.testing import CliRunner
+
+from kuopac.cli.main import app
+from kuopac.enums import DataType, Scope, SupplementarySource
+from kuopac.models import (
+    BibIdentifiers,
+    Book,
+    BookDetail,
+    Holding,
+    Publication,
+    SearchResult,
+    Supplementary,
+)
+
+
+@pytest.fixture
+def runner() -> CliRunner:
+    return CliRunner()
+
+
+def _fake_search_result(*, total: int = 1) -> SearchResult:
+    book = Book(
+        ids=BibIdentifiers(bibid="BB1", ncid="BD9", isbn="9784000000000"),
+        title="Test book / Test Author",
+        publisher_line="Tokyo : Test Pub , 2024",
+        data_type=DataType.BOOK,
+        detail_url="/opac/opac_details/?bibid=BB1",
+        list_index=1, scope=Scope.LOCAL,
+    )
+    return SearchResult(
+        books=[book] if total else [],
+        total=total, opkey="B12345", scope=Scope.LOCAL,
+        page_start=1, page_size=20, sort=6,
+        query_summary="(test)",
+        raw_url="https://kuline.example/?lang=0",
+    )
+
+
+def _fake_book_detail() -> BookDetail:
+    return BookDetail(
+        ids=BibIdentifiers(bibid="BB1", ncid="BD9", isbn="9784000000000"),
+        title="Test / author", title_kana=None,
+        title_main="Test", responsibility="author",
+        data_type=DataType.BOOK,
+        publication=Publication(raw="Tokyo : Test , 2024",
+                                place="Tokyo", publisher="Test", year=2024),
+        language="日本語",
+    )
+
+
+def test_version(runner: CliRunner) -> None:
+    result = runner.invoke(app, ["version"])
+    assert result.exit_code == 0
+    assert result.stdout.strip().count(".") >= 2  # e.g. "0.1.0"
+
+
+def test_schema_list(runner: CliRunner) -> None:
+    result = runner.invoke(app, ["--format", "json", "schema"])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["type"] == "TypeNameList"
+    assert "Book" in payload["data"]
+
+
+def test_schema_for_specific_type(runner: CliRunner) -> None:
+    result = runner.invoke(app, ["--format", "json", "schema", "Book"])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["type"] == "Schema"
+    assert payload["data"]["title"] == "Book"
+
+
+def test_search_json_envelope(monkeypatch, runner: CliRunner) -> None:
+    def fake_search(self, query, **kwargs):
+        return _fake_search_result()
+    monkeypatch.setattr("kuopac.client.KulineClient.search", fake_search)
+    result = runner.invoke(app, ["--format", "json", "search", "test"])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["type"] == "SearchResult"
+    assert payload["data"]["total"] == 1
+    assert payload["data"]["books"][0]["bibid"] == "BB1"
+
+
+def test_search_ndjson_streams_books(monkeypatch, runner: CliRunner) -> None:
+    def fake_search(self, query, **kwargs):
+        return _fake_search_result()
+    monkeypatch.setattr("kuopac.client.KulineClient.search", fake_search)
+    result = runner.invoke(app, ["--format", "ndjson", "search", "t"])
+    assert result.exit_code == 0
+    lines = [l for l in result.stdout.splitlines() if l.strip()]
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert record["bibid"] == "BB1"
+
+
+def test_search_strict_no_hits_exits_1(monkeypatch, runner: CliRunner) -> None:
+    def fake_search(self, query, **kwargs):
+        return _fake_search_result(total=0)
+    monkeypatch.setattr("kuopac.client.KulineClient.search", fake_search)
+    result = runner.invoke(
+        app, ["--format", "json", "--strict", "search", "x"]
+    )
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["data"]["total"] == 0
+
+
+def test_search_fields_projection_in_ndjson(monkeypatch, runner: CliRunner) -> None:
+    def fake_search(self, query, **kwargs):
+        return _fake_search_result()
+    monkeypatch.setattr("kuopac.client.KulineClient.search", fake_search)
+    result = runner.invoke(
+        app, ["--format", "ndjson", "--fields", "bibid,title", "search", "t"]
+    )
+    assert result.exit_code == 0
+    line = result.stdout.strip().splitlines()[0]
+    record = json.loads(line)
+    assert set(record.keys()) == {"bibid", "title"}
+
+
+def test_detail_with_synopsis_merges_supplementary(
+    monkeypatch, runner: CliRunner,
+) -> None:
+    def fake_detail(self, ident, *, scope=None):
+        return _fake_book_detail()
+
+    def fake_sup(self, target, *, source):
+        return Supplementary(
+            source=source, synopsis="ABSTRACT", toc=["c1", "c2"],
+        )
+
+    monkeypatch.setattr("kuopac.client.KulineClient.detail", fake_detail)
+    monkeypatch.setattr(
+        "kuopac.client.KulineClient.fetch_supplementary", fake_sup,
+    )
+    result = runner.invoke(
+        app, ["--format", "json", "detail", "BB1", "--with", "synopsis"],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["type"] == "BookDetail"
+    assert payload["data"]["_supplementary"]["synopsis"] == "ABSTRACT"
+
+
+def test_holdings_returns_map(monkeypatch, runner: CliRunner) -> None:
+    def fake_holdings(self, bibids):
+        # Library normalises any iterable of identifiers; just return canned.
+        return {
+            "BB1": [Holding(location="loc", call_no="c1", barcode="b1")],
+            "BB2": [Holding(location="loc", call_no="c2", barcode="b2")],
+        }
+    monkeypatch.setattr("kuopac.client.KulineClient.holdings", fake_holdings)
+    result = runner.invoke(
+        app, ["--format", "json", "holdings", "BB1", "BB2"],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["type"] == "HoldingMap"
+    assert set(payload["data"].keys()) == {"BB1", "BB2"}
+
+
+def test_suggest_returns_list(monkeypatch, runner: CliRunner) -> None:
+    def fake_suggest(self, term):
+        return ["abc", "abcd"]
+    monkeypatch.setattr("kuopac.client.KulineClient.suggest", fake_suggest)
+    result = runner.invoke(app, ["--format", "json", "suggest", "a"])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["type"] == "SuggestionList"
+    assert payload["data"] == ["abc", "abcd"]
+
+
+def test_unknown_with_token_is_rejected(runner: CliRunner) -> None:
+    result = runner.invoke(
+        app, ["--format", "json", "search", "x", "--with", "bogus"],
+    )
+    assert result.exit_code == 2  # INVALID_ARGUMENT
+    payload = json.loads(result.stdout)
+    assert payload["type"] == "Error"
+    assert payload["error"]["code"] == "INVALID_ARGUMENT"
+
+
+def test_manifest_includes_commands_and_types(runner: CliRunner) -> None:
+    result = runner.invoke(app, ["--format", "json", "manifest"])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["type"] == "Manifest"
+    cmd_names = {c["name"] for c in payload["data"]["commands"]}
+    assert {"search", "detail", "holdings", "suggest", "manifest"} <= cmd_names
+    assert "Book" in payload["data"]["types"]
