@@ -1,7 +1,7 @@
 """``kuopac did-you-mean <opkey>`` — spellcheck candidates."""
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Optional
 
 import typer
 
@@ -17,6 +17,10 @@ def register(app: typer.Typer) -> None:
     def did_you_mean_cmd(
         ctx: typer.Context,
         opkey: Annotated[str, typer.Argument(help="検索結果の opkey (B<14桁>)")],
+        limit: Annotated[
+            Optional[int],
+            typer.Option("--limit", help="表示件数上限"),
+        ] = None,
     ) -> None:
         cfg: RunConfig = ctx.obj
         # We don't need a full SearchResult — just hit the endpoint directly so
@@ -30,7 +34,7 @@ def register(app: typer.Typer) -> None:
             candidates = [c.term for c in _parse.parse_spellcheck(r.text)]
         finally:
             http.close()
-        if cfg.limit is not None:
-            candidates = candidates[: cfg.limit]
+        if limit is not None:
+            candidates = candidates[:limit]
         envelope = listing("Suggestion", candidates, meta=cfg.meta())
         write(envelope, cfg)

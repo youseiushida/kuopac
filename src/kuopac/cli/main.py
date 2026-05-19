@@ -5,9 +5,46 @@ Top-level ``--`` flags are captured in a :class:`RunConfig` placed on
 """
 from __future__ import annotations
 
+import sys
 from typing import Annotated, Optional
 
 import typer
+
+
+def _force_utf8_streams() -> None:
+    """Make stdout/stderr UTF-8 — and LF-only when piped — even on Windows.
+
+    Two Windows-specific gotchas this fixes:
+
+    1. ``kuopac --help`` and any JP search output mojibake when the parent
+       shell hasn't set ``chcp 65001`` / ``PYTHONIOENCODING``.  Force UTF-8.
+
+    2. On Windows, text-mode stdout translates ``\\n`` to ``\\r\\n``.  That
+       contaminates JSON / NDJSON output read back by another process — e.g.
+       ``kuopac ... | jq -r .bibid | xargs kuopac detail`` would pass
+       ``BB...\\r`` as the bibid and 404.  When stdout isn't a TTY we suppress
+       the translation so byte-output matches Unix.  For TTYs we keep the
+       default so terminals that need CRLF still render correctly.
+
+    Safe no-op on platforms/streams that already use UTF-8 LF.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            kwargs: dict[str, str] = {"encoding": "utf-8", "errors": "replace"}
+            isatty = getattr(stream, "isatty", lambda: False)
+            if not isatty():
+                kwargs["newline"] = ""
+            reconfigure(**kwargs)
+        except (ValueError, OSError):
+            # Stream is detached or doesn't support reconfigure — accept the
+            # existing encoding rather than crashing.
+            pass
+
+
+_force_utf8_streams()
 
 # Disable typer's Rich-panel error formatting so ``CliError.show()`` (which
 # emits a JSON envelope) runs in both ``standalone_mode`` paths — including
@@ -16,6 +53,10 @@ try:
     import typer.rich_utils as _typer_rich_utils
 
     def _plain_rich_format_error(exc) -> None:  # type: ignore[no-untyped-def]
+        hint = _maybe_global_flag_hint(exc)
+        if hint is not None:
+            hint.show()
+            return
         exc.show()
     _typer_rich_utils.rich_format_error = _plain_rich_format_error  # type: ignore[assignment]
 except ImportError:  # pragma: no cover
@@ -56,13 +97,9 @@ def main_callback(
     ] = False,
     fields_: Annotated[
         Optional[list[str]],
-        typer.Option("--fields", help="ドット記法でのフィールド射影。複数指定可"),
-    ] = None,
-    limit: Annotated[
-        Optional[int],
         typer.Option(
-            "--limit",
-            help="表示件数上限 (search / suggest / did-you-mean に適用)",
+            "--fields",
+            help="ドット記法でのフィールド射影 (複数指定可: 繰り返し or カンマ区切り)",
         ),
     ] = None,
     quiet: Annotated[
@@ -113,7 +150,6 @@ def main_callback(
     ctx.obj = RunConfig(
         format=chosen,
         fields=fields_ or None,
-        limit=limit,
         quiet=quiet,
         explain=explain,
         explain_json=explain_json,
@@ -149,6 +185,43 @@ for mod in (_search, _detail, _holdings, _status, _suggest, _did_you_mean,
 
 # ---- Global error trap -----------------------------------------------------
 
+# Names of every flag defined on ``main_callback``.  When a user puts one of
+# these after the subcommand (``kuopac search --json …``), click raises
+# ``NoSuchOption`` for the subcommand.  We catch that case and rewrite the
+# error to nudge the user toward the right position.
+_GLOBAL_FLAG_NAMES = frozenset({
+    "--format", "-F", "--json", "--fields",
+    "--quiet", "-q",
+    "--explain", "--explain-json",
+    "--no-color", "--user-agent",
+    "--rate-limit", "--timeout",
+    "--strict", "--version",
+})
+
+
+def _maybe_global_flag_hint(exc) -> "CliError | None":  # type: ignore[name-defined]
+    """Map a misplaced-global ``NoSuchOption`` to a hint-bearing :class:`CliError`.
+
+    Returns ``None`` when the offending option isn't a known global flag, so
+    click's default formatting (with its own "Did you mean ..." spelling
+    correction) is preserved for true typos.
+    """
+    import click
+    if not isinstance(exc, click.exceptions.NoSuchOption):
+        return None
+    bad = getattr(exc, "option_name", None)
+    if not bad or bad not in _GLOBAL_FLAG_NAMES:
+        return None
+    from .errors import CliError
+    # ``ctx.info_name`` is the subcommand click was parsing when it failed.
+    ctx = getattr(exc, "ctx", None)
+    sub = getattr(ctx, "info_name", None) or "<subcommand>"
+    hint = (
+        f"{bad} は global option です。subcommand の前に置いてください: "
+        f"`kuopac {bad} ... {sub} ...`"
+    )
+    return CliError("INVALID_ARGUMENT", hint)
+
 
 def _main_with_errors() -> int:
     """Wrap ``app()`` so library exceptions become structured CLI errors.
@@ -162,6 +235,10 @@ def _main_with_errors() -> int:
         app(standalone_mode=False)
         return 0
     except click.ClickException as e:
+        hint = _maybe_global_flag_hint(e)
+        if hint is not None:
+            hint.show()
+            return hint.exit_code
         e.show()
         return getattr(e, "exit_code", 1)
     except KeyboardInterrupt:

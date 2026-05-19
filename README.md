@@ -83,6 +83,8 @@ kuopac --json schema BookDetail                       # 個別型の JSON Schema
 ```
 
 主要グローバルフラグ: `--format {table,json,ndjson,tsv,yaml}` / `--fields ids.bibid,title` / `--explain-json` (`_meta.requests[]` 埋込) / `--strict` (0件ヒットを exit 1) / `--rate-limit SECONDS`。
+リストを取るフラグ (`--fields`, `--media`, `--field`, `--refine`, `--with`, `--type`) はすべて **繰り返し or カンマ区切りの両方** を受け付ける。
+`--limit` は `search` / `suggest` / `did-you-mean` のサブコマンド側に置く (`kuopac search Python --limit 5`)。
 
 `kuopac manifest --format json` を tools catalog として読み込めば、Claude Desktop / OpenAI agents から型安全に呼び出せる。
 

@@ -24,12 +24,15 @@ _MANIFEST_COMMANDS = [
             {"name": "--ncid", "type": "string"},
             {"name": "--bibid", "type": "string"},
             {"name": "--call-no", "type": "string"},
-            {"name": "--field", "type": "string", "repeatable": True},
+            {"name": "--field", "type": "string", "repeatable": True,
+             "comma_separated": True,
+             "description": "任意フィールド: NAME=VALUE"},
             {"name": "--op", "type": "string", "default": "AND",
              "enum": ["AND", "OR", "NOT"]},
             {"name": "--scope", "type": "string", "default": "local",
              "enum": ["local", "cinii"]},
-            {"name": "--media", "type": "string", "repeatable": True},
+            {"name": "--media", "type": "string", "repeatable": True,
+             "comma_separated": True},
             {"name": "--year", "type": "string", "format": "YYYY-YYYY"},
             {"name": "--year-from", "type": "integer"},
             {"name": "--year-to", "type": "integer"},
@@ -38,8 +41,13 @@ _MANIFEST_COMMANDS = [
             {"name": "--start", "type": "integer", "default": 1},
             {"name": "--all", "type": "boolean"},
             {"name": "--max-pages", "type": "integer", "default": 5},
-            {"name": "--refine", "type": "string", "repeatable": True},
-            {"name": "--with", "type": "string", "enum": ["holdings"]},
+            {"name": "--refine", "type": "string", "repeatable": True,
+             "comma_separated": True,
+             "description": "検索後ファセット適用: k=v"},
+            {"name": "--with", "type": "string", "repeatable": True,
+             "comma_separated": True, "enum": ["holdings"]},
+            {"name": "--limit", "type": "integer",
+             "description": "表示件数上限"},
         ],
         "output_type": "SearchResult",
         "request_count": "1 GET (+1 POST per page if --with holdings; "
@@ -61,6 +69,7 @@ _MANIFEST_COMMANDS = [
             {"name": "--scope", "type": "string", "default": "auto",
              "enum": ["auto", "local", "cinii"]},
             {"name": "--with", "type": "string", "repeatable": True,
+             "comma_separated": True,
              "enum": ["holdings", "synopsis", "bookplus",
                       "synopsis-openbd", "openbd", "live-status"]},
         ],
@@ -81,7 +90,8 @@ _MANIFEST_COMMANDS = [
         ],
         "options": [
             {"name": "--datatype", "type": "integer", "default": 10},
-            {"name": "--with", "type": "string", "enum": ["live-status"]},
+            {"name": "--with", "type": "string", "repeatable": True,
+             "comma_separated": True, "enum": ["live-status"]},
         ],
         "output_type": "HoldingMap",
         "request_count": "1 POST (+N GET if --with live-status)",
@@ -110,7 +120,10 @@ _MANIFEST_COMMANDS = [
         "name": "suggest",
         "summary": "サジェスト候補",
         "arguments": [{"name": "term", "type": "string", "required": True}],
-        "options": [],
+        "options": [
+            {"name": "--limit", "type": "integer",
+             "description": "表示件数上限"},
+        ],
         "output_type": "SuggestionList",
         "request_count": "1 GET",
         "examples": ["kuopac suggest 機械"],
@@ -119,7 +132,10 @@ _MANIFEST_COMMANDS = [
         "name": "did-you-mean",
         "summary": "スペル候補",
         "arguments": [{"name": "opkey", "type": "string", "required": True}],
-        "options": [],
+        "options": [
+            {"name": "--limit", "type": "integer",
+             "description": "表示件数上限"},
+        ],
         "output_type": "SuggestionList",
         "request_count": "1 GET",
     },
@@ -128,7 +144,8 @@ _MANIFEST_COMMANDS = [
         "summary": "ファセット集計",
         "arguments": [{"name": "opkey", "type": "string", "required": True}],
         "options": [
-            {"name": "--type", "type": "string", "repeatable": True},
+            {"name": "--type", "type": "string", "repeatable": True,
+             "comma_separated": True},
             {"name": "--all-types", "type": "boolean"},
             {"name": "--top", "type": "integer"},
             {"name": "--scope", "type": "string", "default": "local"},
@@ -177,15 +194,78 @@ _MANIFEST_COMMANDS = [
     },
 ]
 
+# Shell-pipe patterns aimed at LLM agents.  These cover use cases that don't
+# warrant their own subcommand (the 1 method = 1 request principle keeps the
+# binary surface small) but that an agent should know are idiomatic.
+_AGENT_PATTERNS = [
+    {
+        "name": "did_you_mean_on_empty",
+        "description": "0件ヒット時、同じ opkey でスペル候補を取得して "
+                       "再検索の手がかりにする",
+        "snippet": (
+            "r=$(kuopac --json search \"$Q\")\n"
+            "[ \"$(echo \"$r\" | jq .data.total)\" = \"0\" ] && \\\n"
+            "  kuopac --json did-you-mean "
+            "\"$(echo \"$r\" | jq -r .data.opkey)\""
+        ),
+    },
+    {
+        "name": "bulk_search",
+        "description": "クエリ配列 (1行1クエリ) を NDJSON にストリーム展開。"
+                       "`xargs -P N` で並列化、`--rate-limit` でレート制御",
+        "snippet": (
+            "cat queries.txt | xargs -I {} \\\n"
+            "  kuopac --format ndjson --rate-limit 1.5 "
+            "search {} --limit 5"
+        ),
+    },
+    {
+        "name": "search_then_detail",
+        "description": "検索結果の bibid 配列を detail に流し込む。"
+                       "ヒット書誌の全フィールドを得たいとき。"
+                       "`tr -d '\\r'` は Git-for-Windows の jq が "
+                       "LF→CRLF 翻訳するための保険 (Unix では no-op)",
+        "snippet": (
+            "kuopac --format ndjson search \"$Q\" --all --max-pages 3 | \\\n"
+            "  jq -r '.bibid' | \\\n"
+            "  tr -d '\\r' | \\\n"
+            "  xargs -I {} kuopac --json detail {}"
+        ),
+    },
+    {
+        "name": "local_then_cinii",
+        "description": "京大に無ければ CiNii Books (他大学) にフォールバック。"
+                       "`did_you_mean_on_empty` の兄弟パターン",
+        "snippet": (
+            "r=$(kuopac --json search \"$Q\")\n"
+            "if [ \"$(echo \"$r\" | jq .data.total)\" = \"0\" ]; then\n"
+            "  kuopac --json search \"$Q\" --scope cinii\n"
+            "else\n"
+            "  echo \"$r\"\n"
+            "fi"
+        ),
+    },
+    {
+        "name": "available_only_filter",
+        "description": "`--with holdings` の結果から在架本だけ抽出 "
+                       "(貸出中・電子のみ・他大学のみは除外)",
+        "snippet": (
+            "kuopac --json search \"$Q\" --with holdings --limit 20 | \\\n"
+            "  jq '.data.books[] | "
+            "select(.holdings[]?.availability == \"available_on_shelf\") "
+            "| {bibid, title}'"
+        ),
+    },
+]
+
 _GLOBAL_OPTIONS = [
     {"name": "--format", "type": "string",
      "enum": ["table", "json", "ndjson", "tsv", "yaml"],
      "default": "auto (TTY=table, pipe=json)"},
     {"name": "--json", "type": "boolean", "description": "--format=json"},
     {"name": "--fields", "type": "string", "repeatable": True,
+     "comma_separated": True,
      "description": "ドット記法フィールド射影"},
-    {"name": "--limit", "type": "integer",
-     "description": "表示件数上限 (search / suggest / did-you-mean に適用)"},
     {"name": "--quiet", "type": "boolean"},
     {"name": "--explain", "type": "boolean",
      "description": "リクエスト URL を stderr に出す"},
@@ -209,6 +289,7 @@ def register(app: typer.Typer) -> None:
             "description": "京都大学 OPAC KULINE の蔵書検索CLI (匿名アクセス)",
             "global_options": _GLOBAL_OPTIONS,
             "commands": _MANIFEST_COMMANDS,
+            "agent_patterns": _AGENT_PATTERNS,
             "types": all_schemas(),
             "exit_codes": {
                 "0": "成功",

@@ -1,7 +1,7 @@
 """``kuopac suggest <term>`` — autocomplete suggestions."""
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Optional
 
 import typer
 
@@ -15,11 +15,15 @@ def register(app: typer.Typer) -> None:
     def suggest_cmd(
         ctx: typer.Context,
         term: Annotated[str, typer.Argument(help="補完したい先頭文字列")],
+        limit: Annotated[
+            Optional[int],
+            typer.Option("--limit", help="表示件数上限"),
+        ] = None,
     ) -> None:
         cfg: RunConfig = ctx.obj
         with build_client(cfg) as kuline:
             terms = kuline.suggest(term)
-        if cfg.limit is not None:
-            terms = terms[: cfg.limit]
+        if limit is not None:
+            terms = terms[:limit]
         envelope = listing("Suggestion", terms, meta=cfg.meta())
         write(envelope, cfg)

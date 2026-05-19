@@ -127,7 +127,7 @@ def test_search_limit_truncates_books(monkeypatch, runner: CliRunner) -> None:
         )
     monkeypatch.setattr("kuopac.client.KulineClient.search", fake_search)
     result = runner.invoke(
-        app, ["--format", "json", "--limit", "2", "search", "x"]
+        app, ["--format", "json", "search", "x", "--limit", "2"]
     )
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
@@ -213,6 +213,115 @@ def test_suggest_returns_list(monkeypatch, runner: CliRunner) -> None:
     assert payload["data"] == ["abc", "abcd"]
 
 
+def test_suggest_limit_caps_results(monkeypatch, runner: CliRunner) -> None:
+    """``suggest --limit`` is a subcommand-level flag (not global)."""
+    def fake_suggest(self, term):
+        return ["abc", "abcd", "abcde", "abcdef"]
+    monkeypatch.setattr("kuopac.client.KulineClient.suggest", fake_suggest)
+    result = runner.invoke(
+        app, ["--format", "json", "suggest", "a", "--limit", "2"]
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["data"] == ["abc", "abcd"]
+
+
+def test_search_field_accepts_alias_and_wire_code(
+    monkeypatch, runner: CliRunner,
+) -> None:
+    """``--field publisher=X`` and ``--field pubkey=X`` resolve to the same field."""
+    from kuopac.enums import SearchField
+    seen_conditions: list[list] = []
+
+    def fake_search(self, query, **kwargs):
+        conds = list(getattr(query, "conditions", []) or [])
+        seen_conditions.append(conds)
+        return _fake_search_result(total=0)
+
+    monkeypatch.setattr("kuopac.client.KulineClient.search", fake_search)
+    # friendly alias
+    runner.invoke(app, ["--format", "json", "search", "x",
+                        "--field", "publisher=丸善出版"])
+    # wire code
+    runner.invoke(app, ["--format", "json", "search", "x",
+                        "--field", "pubkey=丸善出版"])
+    assert len(seen_conditions) == 2
+    fields_used = []
+    for conds in seen_conditions:
+        # condition objects expose .field; we just compare by enum identity.
+        for c in conds:
+            f = getattr(c, "field", None)
+            if f is SearchField.PUBLISHER:
+                fields_used.append(f)
+                break
+    assert len(fields_used) == 2  # both invocations resolved to PUBLISHER
+
+
+def test_search_field_unknown_name_rejected(runner: CliRunner) -> None:
+    result = runner.invoke(
+        app, ["--format", "json", "search", "x", "--field", "nonexistent=X"],
+    )
+    assert result.exit_code == 2
+    payload = json.loads(result.stdout)
+    assert payload["error"]["code"] == "INVALID_ARGUMENT"
+    assert "nonexistent" in payload["error"]["message"]
+
+
+def test_search_media_accepts_comma_and_repeat(
+    monkeypatch, runner: CliRunner,
+) -> None:
+    """``--media`` accepts both ``a,b`` and repeated forms (parity with --with)."""
+    seen_media: list[list] = []
+
+    def fake_search(self, query, **kwargs):
+        # The CLI builds a SearchQuery whose .media_codes captures the picks;
+        # we just record the query and return an empty result.
+        media = list(getattr(query, "media_types", []) or [])
+        seen_media.append(media)
+        return _fake_search_result(total=0)
+
+    monkeypatch.setattr("kuopac.client.KulineClient.search", fake_search)
+    # comma form
+    runner.invoke(app, ["--format", "json", "search", "x",
+                        "--media", "book,ebook"])
+    # repeat form
+    runner.invoke(app, ["--format", "json", "search", "x",
+                        "--media", "book", "--media", "ebook"])
+    assert len(seen_media) == 2
+    assert seen_media[0] == seen_media[1]
+    assert len(seen_media[0]) == 2
+
+
+def test_misplaced_global_flag_gives_hint(runner: CliRunner) -> None:
+    """``kuopac search --json`` should hint that --json belongs before the subcommand."""
+    result = runner.invoke(app, ["search", "x", "--json"])
+    assert result.exit_code == 2
+    payload = json.loads(result.stdout)
+    assert payload["type"] == "Error"
+    assert payload["error"]["code"] == "INVALID_ARGUMENT"
+    assert "--json" in payload["error"]["message"]
+    assert "global option" in payload["error"]["message"]
+    assert "search" in payload["error"]["message"]
+
+
+def test_misplaced_global_short_flag_gives_hint(runner: CliRunner) -> None:
+    """The hint also fires for short forms like ``-q``."""
+    result = runner.invoke(app, ["search", "x", "-q"])
+    assert result.exit_code == 2
+    payload = json.loads(result.stdout)
+    assert payload["error"]["code"] == "INVALID_ARGUMENT"
+    assert "-q" in payload["error"]["message"]
+
+
+def test_genuinely_unknown_option_keeps_click_default(runner: CliRunner) -> None:
+    """For typos that aren't global flags, click's normal error is preserved."""
+    result = runner.invoke(app, ["search", "x", "--nonexistent"])
+    assert result.exit_code != 0
+    # No JSON envelope when click handles it; just verify it didn't crash with
+    # the global-flag hint path.
+    assert "global option" not in (result.stdout + result.stderr)
+
+
 def test_unknown_with_token_is_rejected(runner: CliRunner) -> None:
     result = runner.invoke(
         app, ["--format", "json", "search", "x", "--with", "bogus"],
@@ -231,3 +340,21 @@ def test_manifest_includes_commands_and_types(runner: CliRunner) -> None:
     cmd_names = {c["name"] for c in payload["data"]["commands"]}
     assert {"search", "detail", "holdings", "suggest", "manifest"} <= cmd_names
     assert "Book" in payload["data"]["types"]
+
+
+def test_manifest_includes_agent_patterns(runner: CliRunner) -> None:
+    """Shell-pipe idioms intentionally not implemented as subcommands are
+    documented as ``agent_patterns`` so an LLM agent can discover them."""
+    result = runner.invoke(app, ["--format", "json", "manifest"])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    patterns = payload["data"]["agent_patterns"]
+    names = {p["name"] for p in patterns}
+    assert {
+        "did_you_mean_on_empty", "bulk_search", "search_then_detail",
+        "local_then_cinii", "available_only_filter",
+    } <= names
+    # every pattern carries an executable snippet
+    for p in patterns:
+        assert p["snippet"].strip(), f"pattern {p['name']!r} has empty snippet"
+        assert "kuopac" in p["snippet"]

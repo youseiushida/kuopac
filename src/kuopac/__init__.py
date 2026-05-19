@@ -86,4 +86,9 @@ __all__ = [
     # Errors
     "CSRFError", "ForbiddenError", "KulineError", "NotFoundError", "ParseError",
 ]
-__version__ = "0.1.0"
+try:
+    from importlib.metadata import PackageNotFoundError, version as _pkg_version
+    __version__ = _pkg_version("kuopac")
+except PackageNotFoundError:  # source checkout without install metadata
+    __version__ = "0.0.0+unknown"
+del PackageNotFoundError, _pkg_version  # type: ignore[name-defined]

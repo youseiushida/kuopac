@@ -7,6 +7,7 @@ from typing import Annotated, Optional
 import typer
 
 from ...enums import DataType
+from .._listflag import split_list_flag
 from ..config import RunConfig
 from ..errors import CliError
 from ..formatters import single, write
@@ -27,7 +28,11 @@ def register(app: typer.Typer) -> None:
         ] = 10,
         with_: Annotated[
             Optional[list[str]],
-            typer.Option("--with", help="live-status"),
+            typer.Option(
+                "--with",
+                help="追加情報: live-status "
+                     "(複数指定可: 繰り返し or カンマ区切り)",
+            ),
         ] = None,
     ) -> None:
         cfg: RunConfig = ctx.obj
@@ -44,10 +49,7 @@ def register(app: typer.Typer) -> None:
             raise CliError("INVALID_ARGUMENT",
                            f"unknown datatype: {datatype}") from e
 
-        live_status = bool(with_ and any(
-            token.strip().lower() == "live-status"
-            for raw in with_ for token in raw.split(",")
-        ))
+        live_status = "live-status" in split_list_flag(with_, lowercase=True)
 
         with build_client(cfg) as kuline:
             # Pass bibid strings; the client tags them with DataType.BOOK by

@@ -114,8 +114,7 @@ kuopac --help / kuopac <cmd> --help
 |--------|-----------|------|
 | `--format {table,json,ndjson,tsv,yaml}` | TTY 自動判定 | 出力形式 |
 | `--json` | – | `--format=json` のエイリアス |
-| `--fields a,b,c.d` | 全フィールド | ドット記法でのフィールド射影 |
-| `--limit N` | コマンドにより異なる | 表示件数上限 (検索結果など) |
+| `--fields a,b,c.d` | 全フィールド | ドット記法でのフィールド射影 (繰り返し or カンマ区切り) |
 | `--quiet` | off | stderr 進捗を抑制 |
 | `--explain` | off | リクエスト URL を stderr に出す |
 | `--dry-run` | off | リクエストを発射せず URL だけ表示 |
@@ -287,6 +286,7 @@ kuopac search [<keyword>] [OPTIONS]
 | `--start N` | 1 |
 | `--all` | off — 全ページ |
 | `--max-pages N` | 5 (--all 時) — 暴走防止 |
+| `--limit N` | – | 表示件数上限 (subcommand level) |
 
 **統合フラグ**:
 - `--with holdings` → 各 Book に所蔵を入れる (1 POST/ページ)
@@ -312,7 +312,7 @@ kuopac search Python --all --max-pages 10 --format ndjson
 kuopac search "深層学習" --scope cinii
 
 # 検索結果に所蔵をマージ
-kuopac search Python --limit 10 --with holdings --format json
+kuopac search Python --with holdings --limit 10 --format json
 ```
 
 ### 5.2 `kuopac detail`
@@ -847,7 +847,7 @@ xargs -I {} kuopac detail {} --format json < bibids.txt > details.jsonl
 ### 14.3 AI エージェント (Claude Desktop / OpenAI agents)
 1. 起動時に `kuopac manifest --format json` を読み、tools として登録
 2. ユーザクエリ「Python 入門書で 2022 年以降のものを 5冊挙げて、貸出可能なものだけ」を受信
-3. `kuopac search --title Python --year 2022 --media book --limit 5 --with holdings --format json` を呼ぶ
+3. `kuopac search --title Python --year 2022 --media book --with holdings --limit 5 --format json` を呼ぶ
 4. JSON を解釈して回答
 5. ユーザが「3冊目の詳細」と言ったら `kuopac detail <bibid3> --with synopsis --format json` を呼ぶ
 

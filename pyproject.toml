@@ -1,6 +1,6 @@
 [project]
 name = "kuopac"
-version = "0.1.4"
+version = "0.2.0"
 description = "Type-safe Python client and CLI for Kyoto University KULINE OPAC (anonymous catalog access)"
 readme = "README.md"
 requires-python = ">=3.12"

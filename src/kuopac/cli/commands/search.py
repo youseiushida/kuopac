@@ -24,6 +24,7 @@ from ...enums import (
 )
 from ...models import SearchResult
 from ...query import SearchQuery
+from .._listflag import split_list_flag
 from ..config import RunConfig
 from ..errors import CliError
 from ..formatters import listing, single, write
@@ -81,6 +82,36 @@ _FIELD_FLAGS = (
     ("call_no", SearchField.CALL_NO),
 )
 
+# ``--field NAME=VALUE`` accepts both wire codes (titlekey_ja, pubkey, ...)
+# and the friendly names used by dedicated flags (title, publisher, ...).
+# Built from ``_FIELD_FLAGS`` plus dashed variants so ``--field title-exact=X``
+# also resolves.
+_FIELD_NAME_ALIASES: dict[str, SearchField] = {
+    name: field for name, field in _FIELD_FLAGS
+}
+_FIELD_NAME_ALIASES.update({
+    name.replace("_", "-"): field for name, field in _FIELD_FLAGS
+})
+
+
+def _resolve_field_name(name: str) -> SearchField | None:
+    """Resolve a ``--field NAME=`` to a :class:`SearchField`, or ``None``.
+
+    Tries (1) friendly alias (``publisher`` / ``title-exact``), then (2) wire
+    code (``pubkey`` / ``ftitlekey``).  Case-insensitive on the alias side,
+    case-sensitive on the wire code (KULINE's codes are lowercase).
+    """
+    key = name.strip()
+    if not key:
+        return None
+    alias = _FIELD_NAME_ALIASES.get(key.lower())
+    if alias is not None:
+        return alias
+    try:
+        return SearchField(key)
+    except ValueError:
+        return None
+
 
 def _parse_year_range(spec: str | None) -> tuple[int | None, int | None]:
     if not spec:
@@ -114,14 +145,6 @@ def _parse_refine(refine_args: list[str]) -> dict[str, str | list[str]]:
     return {k: (vs[0] if len(vs) == 1 else vs) for k, vs in bucket.items()}
 
 
-def _parse_with(with_args: list[str]) -> set[str]:
-    out: set[str] = set()
-    for raw in with_args:
-        for token in raw.split(","):
-            token = token.strip().lower()
-            if token:
-                out.add(token)
-    return out
 
 
 def _build_query(
@@ -168,11 +191,10 @@ def _build_query(
             raise CliError("INVALID_ARGUMENT",
                            f"--field expects NAME=VALUE: {raw!r}")
         name, _, value = raw.partition("=")
-        try:
-            field = SearchField(name.strip())
-        except ValueError as e:
+        field = _resolve_field_name(name)
+        if field is None:
             raise CliError("INVALID_ARGUMENT",
-                           f"unknown search field: {name!r}") from e
+                           f"unknown search field: {name!r}")
         q.add(field, value.strip(), op=op)
 
     for m in media:
@@ -267,15 +289,24 @@ def register(app: typer.Typer) -> None:
         call_no: Annotated[Optional[str], typer.Option("--call-no")] = None,
         extra_field: Annotated[
             Optional[list[str]],
-            typer.Option("--field",
-                         help="任意フィールド: --field NAME=VALUE (繰り返し可)"),
+            typer.Option(
+                "--field",
+                help="任意フィールド: NAME=VALUE "
+                     "(NAME は title/publisher などの別名でも、"
+                     "titlekey_ja/pubkey などの wire code でも可。"
+                     "複数指定可: 繰り返し or カンマ区切り)",
+            ),
         ] = None,
         op: Annotated[str, typer.Option("--op", help="AND|OR|NOT")] = "AND",
         scope_: Annotated[
             str, typer.Option("--scope", help="local | cinii"),
         ] = "local",
         media: Annotated[
-            Optional[list[str]], typer.Option("--media", help="メディア種別 (繰り返し可)"),
+            Optional[list[str]],
+            typer.Option(
+                "--media",
+                help="メディア種別 (複数指定可: 繰り返し or カンマ区切り)",
+            ),
         ] = None,
         year: Annotated[Optional[str], typer.Option("--year", help="2020-2024 または 2024")] = None,
         year_from: Annotated[Optional[int], typer.Option("--year-from")] = None,
@@ -301,13 +332,23 @@ def register(app: typer.Typer) -> None:
         ] = 5,
         refine: Annotated[
             Optional[list[str]],
-            typer.Option("--refine",
-                         help="検索後ファセット適用: --refine k=v,k2=v2"),
+            typer.Option(
+                "--refine",
+                help="検索後ファセット適用: k=v "
+                     "(複数指定可: 繰り返し or カンマ区切り)",
+            ),
         ] = None,
         with_: Annotated[
             Optional[list[str]],
-            typer.Option("--with",
-                         help="追加情報: holdings"),
+            typer.Option(
+                "--with",
+                help="追加情報 holdings "
+                     "(複数指定可: 繰り返し or カンマ区切り)",
+            ),
+        ] = None,
+        limit: Annotated[
+            Optional[int],
+            typer.Option("--limit", help="表示件数上限"),
         ] = None,
     ) -> None:
         cfg: RunConfig = ctx.obj
@@ -326,11 +367,13 @@ def register(app: typer.Typer) -> None:
             "publisher": publisher, "subject": subject, "isbn": isbn,
             "issn": issn, "ncid": ncid, "bibid": bibid, "call_no": call_no,
         }
+        media_tokens = split_list_flag(media)
+        extra_field_tokens = split_list_flag(extra_field)
         query, is_simple = _build_query(
             keyword=keyword, fields_kv=fields_kv,
-            extra_fields=extra_field or [],
+            extra_fields=extra_field_tokens,
             op=op_enum, scope=scope,
-            media=media or [], year=year,
+            media=media_tokens, year=year,
             year_from=year_from, year_to=year_to,
             country=country, language=language_code,
             classification=classification,
@@ -339,7 +382,7 @@ def register(app: typer.Typer) -> None:
         )
 
         refine_map = _parse_refine(refine or [])
-        with_set = _parse_with(with_ or [])
+        with_set = set(split_list_flag(with_, lowercase=True))
         want_holdings = "holdings" in with_set
         invalid_with = with_set - {"holdings"}
         if invalid_with:
@@ -364,8 +407,8 @@ def register(app: typer.Typer) -> None:
             if not all_:
                 if want_holdings:
                     initial.load_holdings()
-                if cfg.limit is not None:
-                    initial.books = initial.books[: cfg.limit]
+                if limit is not None:
+                    initial.books = initial.books[:limit]
                 _emit(initial, cfg, ndjson_stream=ndjson_stream)
                 _enforce_strict(cfg, initial.total)
                 return
@@ -373,7 +416,6 @@ def register(app: typer.Typer) -> None:
             # --all: page-walk; in NDJSON we stream each book as we see it.
             total = initial.total
             emitted = 0
-            limit = cfg.limit
             if ndjson_stream:
                 for page in _iter_pages(initial, max_pages_arg):
                     if want_holdings:

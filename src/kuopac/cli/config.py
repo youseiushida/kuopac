@@ -22,7 +22,6 @@ class RunConfig:
 
     format: OutputFormat = "table"
     fields: list[str] | None = None
-    limit: int | None = None
     quiet: bool = False
     explain: bool = False
     explain_json: bool = False

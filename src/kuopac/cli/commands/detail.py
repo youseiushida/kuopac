@@ -8,6 +8,7 @@ import typer
 
 from ...enums import Scope, SupplementarySource
 from ...models import Holding
+from .._listflag import split_list_flag
 from ..config import RunConfig
 from ..errors import CliError
 from ..formatters import single, write
@@ -27,16 +28,6 @@ def _guess_scope(ident: str) -> Scope:
     return Scope.LOCAL
 
 
-def _parse_with(with_args: list[str]) -> set[str]:
-    out: set[str] = set()
-    for raw in with_args:
-        for token in raw.split(","):
-            token = token.strip().lower()
-            if token:
-                out.add(token)
-    return out
-
-
 _WITH_VALID = {"holdings", "synopsis", "bookplus",
                "synopsis-openbd", "openbd", "live-status"}
 
@@ -53,7 +44,8 @@ def register(app: typer.Typer) -> None:
             Optional[list[str]],
             typer.Option(
                 "--with",
-                help="追加情報: holdings,synopsis,synopsis-openbd,live-status",
+                help="追加情報: holdings | synopsis | synopsis-openbd | "
+                     "live-status (複数指定可: 繰り返し or カンマ区切り)",
             ),
         ] = None,
     ) -> None:
@@ -69,7 +61,7 @@ def register(app: typer.Typer) -> None:
         else:
             scope = Scope.LOCAL
 
-        with_set = _parse_with(with_ or [])
+        with_set = set(split_list_flag(with_, lowercase=True))
         bad = with_set - _WITH_VALID
         if bad:
             raise CliError("INVALID_ARGUMENT",

@@ -52,7 +52,10 @@ def register(app: typer.Typer) -> None:
         opkey: Annotated[str, typer.Argument(help="検索結果の opkey")],
         type_: Annotated[
             Optional[list[str]],
-            typer.Option("--type", help="ファセット種別 (繰り返し or カンマ区切り)"),
+            typer.Option(
+                "--type",
+                help="ファセット種別 (複数指定可: 繰り返し or カンマ区切り)",
+            ),
         ] = None,
         all_types: Annotated[
             bool, typer.Option("--all-types", help="9種類を全部取得"),
