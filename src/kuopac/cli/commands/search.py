@@ -349,11 +349,6 @@ def register(app: typer.Typer) -> None:
                 "use 'detail --with' for synopsis/live-status",
             )
 
-        if cfg.dry_run:
-            from ..explain import announce_dry_run
-            announce_dry_run("GET", "/opac/opac_search/  (query TBD)")
-            return
-
         max_pages_arg = None if max_pages == 0 else max_pages
         ndjson_stream = cfg.format == "ndjson" and (all_ or want_holdings)
 
@@ -369,6 +364,8 @@ def register(app: typer.Typer) -> None:
             if not all_:
                 if want_holdings:
                     initial.load_holdings()
+                if cfg.limit is not None:
+                    initial.books = initial.books[: cfg.limit]
                 _emit(initial, cfg, ndjson_stream=ndjson_stream)
                 _enforce_strict(cfg, initial.total)
                 return
@@ -376,11 +373,15 @@ def register(app: typer.Typer) -> None:
             # --all: page-walk; in NDJSON we stream each book as we see it.
             total = initial.total
             emitted = 0
+            limit = cfg.limit
             if ndjson_stream:
                 for page in _iter_pages(initial, max_pages_arg):
                     if want_holdings:
                         page.load_holdings()
                     for book in page.books:
+                        if limit is not None and emitted >= limit:
+                            _enforce_strict(cfg, total)
+                            return
                         _emit_book_line(book, cfg)
                         emitted += 1
                 _enforce_strict(cfg, total)
@@ -394,6 +395,9 @@ def register(app: typer.Typer) -> None:
                 if want_holdings:
                     page.load_holdings()
                 all_books.extend(page.books)
+                if limit is not None and len(all_books) >= limit:
+                    all_books = all_books[:limit]
+                    break
             aggregated = SearchResult(
                 books=all_books, total=total, opkey=opkey,
                 scope=initial.scope, page_start=1,

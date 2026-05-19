@@ -4,7 +4,7 @@
 [![Python 3.12+](https://img.shields.io/pypi/pyversions/kuopac.svg)](https://pypi.org/project/kuopac/)
 [![Tests](https://github.com/youseiushida/kuopac/actions/workflows/tests.yml/badge.svg)](https://github.com/youseiushida/kuopac/actions/workflows/tests.yml)
 [![Live integration](https://github.com/youseiushida/kuopac/actions/workflows/live.yml/badge.svg)](https://github.com/youseiushida/kuopac/actions/workflows/live.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/youseiushida/kuopac/blob/main/LICENSE)
 
 京都大学図書館機構の OPAC「**KULINE**」を**匿名で**叩く Python ライブラリ + CLI。
 検索・書誌詳細・所蔵情報・貸出状況・あらすじ/目次までを型付きで扱える。
@@ -68,7 +68,7 @@ PYTHONIOENCODING=utf-8 uv run python examples/01_simple_search.py
 ## CLI
 
 ライブラリと同じ機能を `kuopac` コマンドから叩ける。出力は **TTY なら表組み・パイプなら JSON** に自動切替。
-詳細仕様は `docs/cli-design.md`。
+詳細仕様は [docs/cli-design.md](https://github.com/youseiushida/kuopac/blob/main/docs/cli-design.md)。
 
 ```sh
 kuopac search 機械学習                                # 表組みで上位 20 件
@@ -282,75 +282,6 @@ result = kuline.search("Pithon")           # 1 件しかヒットしない
 candidates = kuline.did_you_mean(result)
 # → ['python', 'pitson', 'oithona']
 ```
-
----
-
-## モデル一覧 (公開 dataclass)
-
-| 型 | 用途 |
-|----|------|
-| `SearchResult` | 検索結果1ページ。`books` / `total` / `opkey` / `next_page()` / `start_at(n)` / `iter_all()` / `refine()` / `load_holdings()` |
-| `Book` | 検索結果一覧の1書誌(軽量) |
-| `BookDetail` | 詳細ページから取れる全フィールド (子書誌含む) |
-| `BibIdentifiers` | bibid / ncid / isbn / issn / nbn |
-| `AuthorHeading` | 著者標目: name / kana / role / auid |
-| `Subject` | 件名: scheme / term |
-| `Classification` | 分類: scheme / code (NDC9, NDLC など) |
-| `ParentSeries` | 親書誌/シリーズの参照 |
-| `ChildBib` | シリーズ親書誌の子(巻)1件 |
-| `Publication` | 構造化された出版情報 (place / publisher / year / edition / series) |
-| `RdaTypes` | RDA 表現種別/機器種別/キャリア種別 |
-| `Holding` | 所蔵1冊 (location / call_no / condition / online_url / institution …) |
-| `BLStatusQuery` | 貸出状態取得のためのパラメータ束 (Holding 内に同梱、`fetch_status` の引数として利用可) |
-| `Supplementary` | あらすじ + 目次 |
-| `FacetInfo` / `FacetValue` | ファセット情報 |
-| `ExternalLinks` | 他検索サイト誘導 (CiNii / NDL / Google …) |
-
----
-
-## 例(`examples/`)
-
-| ファイル | 内容 |
-|---------|------|
-| `01_simple_search.py` | キーワード1つで検索 |
-| `02_advanced_query.py` | `SearchQuery` ビルダーで多条件検索 |
-| `03_pagination.py` | `iter_all()` / `next_page()` |
-| `04_facets_and_refine.py` | ファセット集計 + `.refine()` 絞り込み |
-| `05_detail_and_holdings.py` | 詳細ページから書誌 + 所蔵 |
-| `06_cinii_other_universities.py` | 他大学(CiNii Books)検索 |
-| `07_suggest_and_spell.py` | サジェスト + もしかして |
-| `08_search_with_holdings.py` | 検索結果一覧に所蔵+貸出状態を一括ロード |
-| `09_synopsis_and_toc.py` | あらすじ/目次取得 (BookPlus / openBD) |
-
-実行:
-
-```sh
-PYTHONIOENCODING=utf-8 uv run python examples/08_search_with_holdings.py
-```
-
----
-
-## ドキュメント
-
-- **`docs/opac-spec.md`** — KULINE OPAC 全エンドポイントの通信契約と HTML スキーマ。
-  HAR と実通信の両方で検証済。観測根拠を `[verified]`/`[har]`/`[inferred]` で明記。
-- **`docs/audit-report.md`** — ライブラリ出力と生 HTML の網羅性監査レポート。
-  検索パラメータの実適用検証、書誌詳細・所蔵テーブルの抽出網羅率、修正したバグ一覧。
-- **`scripts/probe.py`** + **`scripts/probes.py`** — 仕様調査用の生 HTTP プローブ。
-- **`scripts/audit.py`** — 抽出網羅性の自動監査ハーネス。
-- **`docs/cli-design.md`** — CLI の仕様 (引数・出力スキーマ・終了コード・manifest 形式)。
-
----
-
-## テスト
-
-```sh
-uv run pytest                    # 高速オフライン (159 tests, < 1 秒)
-uv run pytest --live             # KULINE への 10 本実通信スイート (~30 秒)
-```
-
-オフライン内訳: parse 33 + client wire-format 37 + CLI 36 + examples 9 + query 14 / http 9 / models 10 / enums 11 = **159**。
-ライブ: 偽陽性回避のため値ではなく**形**でアサート (件数しきい値 / bibid prefix / round-trip 同一性)。CI は通常テストを push/PR 毎 (`.github/workflows/tests.yml`)、ライブは毎日 03:00 JST に cron 実行 (`.github/workflows/live.yml`)。ライブ失敗時は issue 自動起票。
 
 ---
 

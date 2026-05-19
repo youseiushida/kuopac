@@ -48,8 +48,3 @@ def attach(session: HttpSession, cfg: RunConfig) -> None:
 
     client.event_hooks.setdefault("request", []).append(on_request)
     client.event_hooks.setdefault("response", []).append(on_response)
-
-
-def announce_dry_run(method: str, url: str) -> None:
-    """Print the request that *would* be made when ``--dry-run`` is on."""
-    print(f"[dry-run] {method} {url}", file=sys.stderr)

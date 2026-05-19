@@ -26,10 +26,8 @@ class RunConfig:
     quiet: bool = False
     explain: bool = False
     explain_json: bool = False
-    dry_run: bool = False
     no_color: bool = False
     user_agent: str = "kuopac/0.1"
-    lang: str = "ja"
     rate_limit: float = 0.0
     timeout: float = 30.0
     strict: bool = False

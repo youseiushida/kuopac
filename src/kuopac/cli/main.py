@@ -27,13 +27,20 @@ from .errors import translate  # noqa: E402
 
 app = typer.Typer(
     name="kuopac",
-    help="京都大学 OPAC (KULINE) コマンドラインクライアント。"
-         "詳細は docs/cli-design.md を参照。",
+    help="京都大学 OPAC (KULINE) コマンドラインクライアント。\n"
+         "ドキュメント: https://github.com/youseiushida/kuopac",
     no_args_is_help=True,
     add_completion=False,
     pretty_exceptions_enable=False,
     pretty_exceptions_show_locals=False,
 )
+
+
+def _print_version_and_exit(value: bool) -> None:
+    """``--version`` callback — eagerly exits before click validates subcommand."""
+    if value:
+        typer.echo(__version__)
+        raise typer.Exit()
 
 
 @app.callback()
@@ -52,7 +59,11 @@ def main_callback(
         typer.Option("--fields", help="ドット記法でのフィールド射影。複数指定可"),
     ] = None,
     limit: Annotated[
-        Optional[int], typer.Option("--limit", help="表示件数上限"),
+        Optional[int],
+        typer.Option(
+            "--limit",
+            help="表示件数上限 (search / suggest / did-you-mean に適用)",
+        ),
     ] = None,
     quiet: Annotated[
         bool, typer.Option("--quiet", "-q", help="stderr 進捗を抑制"),
@@ -64,18 +75,12 @@ def main_callback(
         bool, typer.Option("--explain-json",
                            help="リクエスト情報を JSON の _meta に埋め込む"),
     ] = False,
-    dry_run: Annotated[
-        bool, typer.Option("--dry-run", help="リクエストを発射せず URL だけ表示"),
-    ] = False,
     no_color: Annotated[
         bool, typer.Option("--no-color", help="色付けを無効化"),
     ] = False,
     user_agent: Annotated[
         str, typer.Option("--user-agent", help="HTTP UA を上書き"),
     ] = "kuopac/0.1",
-    lang: Annotated[
-        str, typer.Option("--lang", help="UI 言語 (ja|en)"),
-    ] = "ja",
     rate_limit: Annotated[
         float, typer.Option("--rate-limit",
                             help="連続リクエスト間の最小間隔 (秒)"),
@@ -88,13 +93,15 @@ def main_callback(
                            help="0件ヒットを exit code 1 にする"),
     ] = False,
     version_: Annotated[
-        bool, typer.Option("--version", help="バージョンを表示して終了"),
+        bool,
+        typer.Option(
+            "--version",
+            help="バージョンを表示して終了",
+            callback=_print_version_and_exit,
+            is_eager=True,
+        ),
     ] = False,
 ) -> None:
-    if version_:
-        typer.echo(__version__)
-        raise typer.Exit()
-
     chosen: OutputFormat
     if json_:
         chosen = "json"
@@ -110,10 +117,8 @@ def main_callback(
         quiet=quiet,
         explain=explain,
         explain_json=explain_json,
-        dry_run=dry_run,
         no_color=no_color,
         user_agent=user_agent,
-        lang=lang,
         rate_limit=rate_limit,
         timeout=timeout,
         strict=strict,

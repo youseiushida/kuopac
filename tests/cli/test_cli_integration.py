@@ -105,6 +105,37 @@ def test_search_ndjson_streams_books(monkeypatch, runner: CliRunner) -> None:
     assert record["bibid"] == "BB1"
 
 
+def test_search_limit_truncates_books(monkeypatch, runner: CliRunner) -> None:
+    """``--limit N`` must cap the returned books even when KULINE returned more."""
+    def fake_search(self, query, **kwargs):
+        # Fabricate a 3-book page; --limit 2 should leave us with 2.
+        from kuopac.models import SearchResult, Book, BibIdentifiers
+        from kuopac.enums import DataType, Scope
+        books = [
+            Book(
+                ids=BibIdentifiers(bibid=f"BB{i}"),
+                title=f"book {i}", publisher_line="",
+                data_type=DataType.BOOK, detail_url="",
+                list_index=i, scope=Scope.LOCAL,
+            )
+            for i in range(1, 4)
+        ]
+        return SearchResult(
+            books=books, total=3, opkey="B1", scope=Scope.LOCAL,
+            page_start=1, page_size=20, sort=6,
+            query_summary="", raw_url="",
+        )
+    monkeypatch.setattr("kuopac.client.KulineClient.search", fake_search)
+    result = runner.invoke(
+        app, ["--format", "json", "--limit", "2", "search", "x"]
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    # total reflects KULINE's hit count, not the locally-trimmed list.
+    assert payload["data"]["total"] == 3
+    assert len(payload["data"]["books"]) == 2
+
+
 def test_search_strict_no_hits_exits_1(monkeypatch, runner: CliRunner) -> None:
     def fake_search(self, query, **kwargs):
         return _fake_search_result(total=0)

@@ -30,5 +30,7 @@ def register(app: typer.Typer) -> None:
             candidates = [c.term for c in _parse.parse_spellcheck(r.text)]
         finally:
             http.close()
+        if cfg.limit is not None:
+            candidates = candidates[: cfg.limit]
         envelope = listing("Suggestion", candidates, meta=cfg.meta())
         write(envelope, cfg)
