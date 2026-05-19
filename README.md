@@ -6,7 +6,7 @@
 [![Live integration](https://github.com/youseiushida/kuopac/actions/workflows/live.yml/badge.svg)](https://github.com/youseiushida/kuopac/actions/workflows/live.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/youseiushida/kuopac/blob/main/LICENSE)
 
-京都大学図書館機構の OPAC「**KULINE**」を**匿名で**叩く Python ライブラリ + CLI。
+京都大学図書館機構の OPAC「[KULINE](https://kuline.kulib.kyoto-u.ac.jp/opac/opac_search/)」をログインせずに叩く Python ライブラリ + CLI。
 検索・書誌詳細・所蔵情報・貸出状況・あらすじ/目次までを型付きで扱える。
 
 > **責務の境界**: 予約・ILL申込・MyOPAC 貸出履歴など SSO ログインが必要な操作は対象外です。
