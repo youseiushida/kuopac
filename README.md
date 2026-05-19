@@ -45,10 +45,11 @@ with KulineClient() as kuline:
 Python 3.12+ 必須。
 
 ```sh
-uv add kuopac          # または: pip install kuopac
+uv tool install kuopac   # CLI として使う (グローバル install)
+uv add kuopac            # ライブラリとして自分のプロジェクトに追加
 ```
 
-開発版を試したい場合:
+開発版:
 
 ```sh
 git clone https://github.com/youseiushida/kuopac.git
